@@ -685,7 +685,7 @@ def main():
                 print("Timestamp: {}, Code: {}, Size: {}, Time: {:d}ms, URL: {}".format(
                     str(datetime.datetime.now()),
                     result.code,
-                    bytes_to_human(result.size),
+                    result.size,
                     int(result.time*1000),
                     result.url)
                 )
