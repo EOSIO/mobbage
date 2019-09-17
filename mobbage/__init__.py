@@ -10,6 +10,7 @@ import random
 import requests
 import requests.auth
 from setuptools_scm import get_version
+from file_generator import fdata
 import signal
 import socket
 import sys
