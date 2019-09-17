@@ -10,7 +10,6 @@ import random
 import requests
 import requests.auth
 from setuptools_scm import get_version
-from file_generator import fdata
 import signal
 import socket
 import sys
@@ -350,8 +349,12 @@ class WorkerQueue():
                     "form_var:file_path[:content_type] format")
             file_var, file_path = i
             
-            # Make sure our file exists
+            # Create the file
             try:
+                fh = open(file_path, 'wb')
+                fh.write(os.urandom(12000)
+                fh.close()
+
                 open(file_path, "rb")
             except:
                 raise Exception(
