@@ -464,6 +464,8 @@ class WorkerThread(threading.Thread):
                 from hyper.contrib import HTTP20Adapter
                 sess.mount('https://', HTTP20Adapter())
 
+            # Create random file contents
+
             # Fire off the request and trap any errors that pop up
             start = time.clock()
             try:
@@ -472,6 +474,8 @@ class WorkerThread(threading.Thread):
                 upload_files = []
                 for file_data in job.upload:
                     file_var, file_path, mime_type = file_data
+                    with open(file_path, 'wb') as new_file:
+                        new_file.write(os.urandom(12000))
                     file_obj = open(file_path, "rb")
                     file_name = file_path.split("/")[-1]
 
