@@ -22,7 +22,7 @@ VERSION=get_version(root="..", relative_to=__file__)
 if sys.version[0] == '3':
     from http.cookiejar import MozillaCookieJar
     from urllib.parse import parse_qs
-    import queue 
+    import queue
 else:
     from cookielib import MozillaCookieJar
     from urlparse import parse_qs
@@ -30,7 +30,7 @@ else:
 
 # Get command line arguments and print usage/help statement
 def get_args():
-    
+
     url_file_help = '\n  '.join([
         'URL File Format:\n',
         'The url file is a newline delimited list of URLs (and optionally ',
@@ -66,28 +66,28 @@ def get_args():
         formatter_class=CustomFormat,
         epilog=url_file_help,
         add_help=False)
-    
+
     group1 = parser.add_argument_group("Request control")
     group1.add_argument("urls", metavar="URL", nargs="*",
         help="URL(s) to fetch")
-    group1.add_argument("-f", "--jobfile", metavar="str", 
+    group1.add_argument("-f", "--jobfile", metavar="str",
         type=argparse.FileType("rt"),
         help="Read job data from this file")
-    group1.add_argument("-F", "--urlfile", metavar="str", 
+    group1.add_argument("-F", "--urlfile", metavar="str",
         type=argparse.FileType("rt"),
         help="Read url data from this file.  Mutually exclusive with -f")
     group1.add_argument("-m", "--method", metavar="str", default="GET",
         help="HTTP method to use.  Default is 'GET'")
-    group1.add_argument("-a", "--agent", metavar="str", 
+    group1.add_argument("-a", "--agent", metavar="str",
         default="mobbage/{}".format(VERSION),
         help="Set User-Agent request header")
     group1.add_argument("-H", "--header", metavar="str", action="append",
         default=[], help="""Send request header in 'name:value' format.
           Specify more than once for multiple headers""")
     group1.add_argument("-u", "--upload", metavar="str", action="append",
-        default=[],  help="""Upload a file via multipart/form-data POST. 
+        default=[],  help="""Upload a file via multipart/form-data POST.
         Must be formatted as 'form_var:file_path[:content_type]'.
-        If content type isn't specified, a best guess will be made based 
+        If content type isn't specified, a best guess will be made based
         on the filename. This option can be specified more than once.  Forces
         method to be POST""")
     group1.add_argument("-i", "--insecure", action="store_true",
@@ -100,7 +100,7 @@ def get_args():
         help="Use HTTP/2 standard (experimental).")
 
     group2 = parser.add_argument_group("Authentication")
-    group2.add_argument("-A", "--auth", metavar="str", 
+    group2.add_argument("-A", "--auth", metavar="str",
         help="Auth credentials in 'username:password' format")
     group2.add_argument("-T", "--authtype", metavar="str", default="basic",
         help="Authentication type to use: basic(default), digest")
@@ -154,7 +154,7 @@ def get_args():
 
     # And also show it if we have specified both, because that's just silly
     if args.urls and (args.jobfile or args.urlfile):
-        error("Positional urls and job/URL files are mutually exclusive.", 
+        error("Positional urls and job/URL files are mutually exclusive.",
             parser)
     if args.jobfile and args.urlfile:
         error("Job/URL files are mutually exclusive.", parser)
@@ -236,7 +236,7 @@ class WorkerQueue():
         if not "method" in job:
             job.method = args.method
 
-        # Read in our job delay... 
+        # Read in our job delay...
         try:
             job.delay = (job.delay/1000.0
                 if 'delay' in job else args.delay/1000.0)
@@ -317,7 +317,7 @@ class WorkerQueue():
         for kv in header_list:
             try:
                 key, val = [s.strip() for s in kv.split(':')]
-                header_dict[key.lower()] = val 
+                header_dict[key.lower()] = val
             except:
                 raise Exception(
                     "'{}' header must be in 'key:value' format".format(kv)
@@ -339,7 +339,7 @@ class WorkerQueue():
         job.headers = header_dict
 
         # Set up POST file reads
-        upload_files = (job.upload + args.upload 
+        upload_files = (job.upload + args.upload
             if "upload" in job else args.upload)
         job.upload = []
         for file_data in upload_files:
@@ -348,7 +348,7 @@ class WorkerQueue():
                 raise Exception("Upload files must be in "
                     "form_var:file_path[:content_type] format")
             file_var, file_path = i
-            
+
             # Create the file
             try:
                 fh = open(file_path, 'wb')
@@ -365,7 +365,7 @@ class WorkerQueue():
             if len(i) == 3:
                 mime_type = i[2]
             else:
-                mime_type = (mimetypes.guess_type(file_path)[0] 
+                mime_type = (mimetypes.guess_type(file_path)[0]
                     or 'application/octet-stream')
 
             # Now stick the file data in our upload list
@@ -395,18 +395,18 @@ class WorkerQueue():
                 # thread-unsafe hijinks while accessing it
                 job = self.jobs[self.position]
 
-                # If this data type has a counter embedded in it, 
-                # decrement it, and if it has reached zero, delete it 
+                # If this data type has a counter embedded in it,
+                # decrement it, and if it has reached zero, delete it
                 # from the work list
                 if job.count > 0:
                     job.count -= 1
-                    
+
                     if job.count == 0:
                         del(self.jobs[self.position])
                         self.length -= 1
 
-                # Move our position counter to the next available job.  If 
-                # we have reached the end of the queue, wrap around to 
+                # Move our position counter to the next available job.  If
+                # we have reached the end of the queue, wrap around to
                 # the start of the queue
                 if not self.is_random:
                     self.position += 1
@@ -438,6 +438,29 @@ class WorkerQueue():
         with self.lock:
             return self.num_finished
 
+# A worker thread driver (every second, fire off worker threads)
+class WorkerThreadDriver(threading.Thread):
+    def __init__(self, workers, work_queue, result_queue, http2):
+        threading.Thread.__init__(self)
+        self.workers = workers
+        self.work_queue = work_queue
+        self.result_queue = result_queue
+        self.http2 = http2
+        self.threads = []
+        self.keep_running = True
+
+    def run(self):
+        while(self.keep_running):
+            for i in range(self.workers):
+                thread = WorkerThread(self.work_queue, self.result_queue, self.http2)
+                thread.start()
+                self.threads.append(thread)
+
+            time.sleep(1)
+
+        for thread in self.threads:
+            thread.join()
+
 
 # Our worker thread, responsible for doing all of the heavy lifting
 class WorkerThread(threading.Thread):
@@ -449,99 +472,95 @@ class WorkerThread(threading.Thread):
 
     # Code that gets executed once the thread is launched
     def run(self):
-        while True:
-            job = self.work_queue.get()
 
-            # If the queue is empty, then our work is done
-            if job is None:
-                return
+        job = self.work_queue.get()
 
-            # Set up our Requests session.
-            sess = requests.session()
+        # If the queue is empty, then our work is done
+        if job is None:
+            return
 
-            # Mount our HTTP/2 transport adapter, if requested
-            if self.http2:
-                from hyper.contrib import HTTP20Adapter
-                sess.mount('https://', HTTP20Adapter())
+        # Set up our Requests session.
+        sess = requests.session()
 
-            # Create random file contents
+        # Mount our HTTP/2 transport adapter, if requested
+        if self.http2:
+            from hyper.contrib import HTTP20Adapter
+            sess.mount('https://', HTTP20Adapter())
 
-            # Fire off the request and trap any errors that pop up
-            start = time.clock()
-            try:
+        # Create random file contents
 
-                # Build our multipart file list, if necessary
-                upload_files = []
-                for file_data in job.upload:
-                    file_var, file_path, mime_type = file_data
-                    with open(file_path, 'wb') as new_file:
-                        new_file.write(os.urandom(12000))
-                    file_obj = open(file_path, "rb")
-                    file_name = file_path.split("/")[-1]
+        # Fire off the request and trap any errors that pop up
+        start = time.clock()
+        try:
 
-                    upload_files.append(
-                        (file_var, (file_name, file_obj, mime_type))
-                    )
+            # Build our multipart file list, if necessary
+            upload_files = []
+            for file_data in job.upload:
+                file_var, file_path, mime_type = file_data
+                with open(file_path, 'wb') as new_file:
+                    new_file.write(os.urandom(12000))
+                file_obj = open(file_path, "rb")
+                file_name = file_path.split("/")[-1]
 
-                # Add authentication (if any)
-                auth = None
-                if job.auth:
-                    if job.authtype == "digest":
-                        auth = requests.auth.HTTPDigestAuth(job.auth)
-                    else:
-                        auth = requests.auth.HTTPBasicAuth(job.auth)
-
-                # Now fire off our request!
-                resp = sess.request(
-                    job.method,
-                    job.url,
-                    params=job.params,
-                    data=job.data,
-                    headers=job.headers,
-                    files=upload_files,
-                    auth=auth,
-                    cookies=job.cookiejar,
-                    verify=not job.insecure
-
+                upload_files.append(
+                    (file_var, (file_name, file_obj, mime_type))
                 )
-                resp.raise_for_status()
 
-                # Record the time spent on the request
-                elapsed = time.clock() - start
+            # Add authentication (if any)
+            auth = None
+            if job.auth:
+                if job.authtype == "digest":
+                    auth = requests.auth.HTTPDigestAuth(job.auth)
+                else:
+                    auth = requests.auth.HTTPBasicAuth(job.auth)
 
-                # Now send the results off to our parent thread.  Note that we 
-                # read the actual length of the content instead of using the
-                # content-length response header, since consuming the content
-                # is required for keepalives and we might as well do it here
-                self.result_queue.put(DotDict({
-                    'url':  job.orig_url,
-                    'code': resp.status_code,
-                    'time': elapsed,
-                    'size': len(resp.content)
-                }))
+            # Now fire off our request!
+            resp = sess.request(
+                job.method,
+                job.url,
+                params=job.params,
+                data=job.data,
+                headers=job.headers,
+                files=upload_files,
+                auth=auth,
+                cookies=job.cookiejar,
+                verify=not job.insecure
 
-            # Catch any errors here, be they client-side errors (i.e.
-            # a mal-formed url passed to the requests module) or server
-            # side errors
-            except Exception as e:
-                try:
-                    err_code = resp.status_code
-                except:
-                    err_code = 400
+            )
+            resp.raise_for_status()
 
-                elapsed = time.clock() - start
-                self.result_queue.put(DotDict({
-                    'url': job.orig_url,
-                    'code': err_code,
-                    'time': elapsed,
-                    'size': 0,
-                    'error': e
-                }))
-                        
+            # Record the time spent on the request
+            elapsed = time.clock() - start
 
-            # Now sleep for the specified inter-request time (can be 0)
-            time.sleep(job.delay)
-    
+            # Now send the results off to our parent thread.  Note that we
+            # read the actual length of the content instead of using the
+            # content-length response header, since consuming the content
+            # is required for keepalives and we might as well do it here
+            self.result_queue.put(DotDict({
+                'url':  job.orig_url,
+                'code': resp.status_code,
+                'time': elapsed,
+                'size': len(resp.content)
+            }))
+
+        # Catch any errors here, be they client-side errors (i.e.
+        # a mal-formed url passed to the requests module) or server
+        # side errors
+        except Exception as e:
+            try:
+                err_code = resp.status_code
+            except:
+                err_code = 400
+
+            elapsed = time.clock() - start
+            self.result_queue.put(DotDict({
+                'url': job.orig_url,
+                'code': err_code,
+                'time': elapsed,
+                'size': 0,
+                'error': e
+            }))
+
 
 # Throw a fatal error message and then exit
 def error(msg, parser=False):
@@ -549,7 +568,7 @@ def error(msg, parser=False):
     if parser:
         parser.print_help()
     sys.exit(1)
-    
+
 
 # Convert bytes to human readable
 def bytes_to_human(num, suffix='B'):
@@ -630,7 +649,7 @@ def main():
             url_opts = line.rstrip().split(None, 2)
             data = {} if len(url_opts) < 3 else parse_qs(url_opts[2])
             method = "GET" if len(url_opts) < 2 else url_opts[1]
-            work_queue.put({"url": url_opts[0], "method": method, 
+            work_queue.put({"url": url_opts[0], "method": method,
                 "data": data}, args)
 
     # Otherwise populate it using the URLs specified on the command-line
@@ -645,12 +664,9 @@ def main():
     if not args.quiet and not args.csv and not args.json:
         output("Starting mobbage with {} worker{}.".format(args.workers,
             "s" if args.workers > 1 else ""))
-    threads = []
-    for i in range(args.workers):
-        thread = WorkerThread(work_queue, result_queue, args.http2)
-        thread.start()
-        threads.append(thread)
-        
+    thread_driver = WorkerThreadDriver(args.workers, work_queue, result_queue, args.http2)
+    thread_driver.start()
+
     # Stop parameters
     time_start   = time.time()
     num_requests = 0
@@ -724,7 +740,7 @@ def main():
 
         # Print our progress bar if requested
         if args.progress and prog_update < time.time() - 1:
-            
+
             progress = ("[{:%Y-%m-%d %H:%M:%S}] Elapsed: {}, "
                 "{} requests, {} errors, {}\r").format(
                     datetime.datetime.now(),
@@ -737,15 +753,15 @@ def main():
             sys.stderr.write((" " * prog_length)+"\r")
             sys.stderr.write(progress)
             sys.stderr.flush()
-            
+
             prog_length = len(progress)+1
             prog_update = time.time()
 
     # Purge our work queue to force our worker threads to exit and then
     # wait for the threads to join
     work_queue.purge()
-    for thread in threads:
-        thread.join()
+    thread_driver.keep_running = False
+    thread_driver.join()
 
     # Clean up after our progress bar if it was being used
     if args.progress:
@@ -754,11 +770,11 @@ def main():
 
     # Do some post-process calculations
     num_success = num_requests - num_errors
-    if min_time == inf: 
+    if min_time == inf:
         min_time = 0
-    if min_size == inf: 
+    if min_size == inf:
         min_size = 0
-    min_time = int(min_time * 1000.0) 
+    min_time = int(min_time * 1000.0)
     max_time = int(max_time * 1000.0)
     ms_running = int(time_running * 1000.0)
     avg_time = int(total_time * 1000.0 / num_success) if num_success else 0
@@ -776,7 +792,7 @@ def main():
             "{},{:.2f},{},{},{:.2f},{:.2f}\n"
         ).format(
                 ms_running, num_requests, num_success, num_errors,
-                availability, min_time, avg_time, max_time, min_size, 
+                availability, min_time, avg_time, max_time, min_size,
                 avg_size, max_size, total_size, bps, concurrency
         ))
 
@@ -789,9 +805,9 @@ def main():
             '"total_bytes": {}, "bps": {:.2f}, "concurrency": {:.2f}, {}}}'
         ).format(
             ms_running, num_requests, num_success, num_errors,
-            availability, min_time, avg_time, max_time, min_size, 
+            availability, min_time, avg_time, max_time, min_size,
             avg_size, max_size, total_size, bps, concurrency,
-            ', '.join(['"code_{}": {}'.format(k, result_codes[k]) 
+            ', '.join(['"code_{}": {}'.format(k, result_codes[k])
                 for k in sorted(result_codes, key=result_codes.get, reverse=True)]
             )
         ))
@@ -832,7 +848,7 @@ def main():
             bytes_to_human(total_size),
             bytes_to_human(total_size/time_running),
             num_requests / time_running,
-            '\n'.ljust(8).join(["{}:{: >13}".format(k, result_codes[k]) 
+            '\n'.ljust(8).join(["{}:{: >13}".format(k, result_codes[k])
                 for k in sorted(result_codes, key=result_codes.get, reverse=True)]
             )
         ))
