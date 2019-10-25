@@ -15,6 +15,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 
 VERSION=get_version(root="..", relative_to=__file__)
 
@@ -351,10 +352,6 @@ class WorkerQueue():
 
             # Create the file
             try:
-                fh = open(file_path, 'wb')
-                fh.write(os.urandom(12000))
-                fh.close()
-
                 open(file_path, "rb")
             except:
                 raise Exception(
@@ -495,29 +492,34 @@ class WorkerThread(threading.Thread):
         # Create random file contents
 
         # Fire off the request and trap any errors that pop up
-        start = time.clock()
+
+        # Build our multipart file list, if necessary
+        upload_files = []
+        file_paths = []
+        for file_data in job.upload:
+            file_var, file_path, mime_type = file_data
+            uid = str(uuid.uuid4())
+            file_path += uid
+            file_paths.append(file_path)
+            with open(file_path, 'wb') as new_file:
+                new_file.write(os.urandom(12000))
+            file_obj = open(file_path, "rb")
+            file_name = file_path.split("/")[-1]
+
+            upload_files.append(
+                (file_var, (file_name, file_obj, mime_type))
+            )
+
+        # Add authentication (if any)
+        auth = None
+        if job.auth:
+            if job.authtype == "digest":
+                auth = requests.auth.HTTPDigestAuth(job.auth)
+            else:
+                auth = requests.auth.HTTPBasicAuth(job.auth)
+
         try:
-
-            # Build our multipart file list, if necessary
-            upload_files = []
-            for file_data in job.upload:
-                file_var, file_path, mime_type = file_data
-                with open(file_path, 'wb') as new_file:
-                    new_file.write(os.urandom(12000))
-                file_obj = open(file_path, "rb")
-                file_name = file_path.split("/")[-1]
-
-                upload_files.append(
-                    (file_var, (file_name, file_obj, mime_type))
-                )
-
-            # Add authentication (if any)
-            auth = None
-            if job.auth:
-                if job.authtype == "digest":
-                    auth = requests.auth.HTTPDigestAuth(job.auth)
-                else:
-                    auth = requests.auth.HTTPBasicAuth(job.auth)
+            start = time.clock()
 
             # Now fire off our request!
             resp = sess.request(
@@ -565,6 +567,9 @@ class WorkerThread(threading.Thread):
                 'size': 0,
                 'error': e
             }))
+
+        for file_path in file_paths:
+            os.remove(file_path)
 
 
 # Throw a fatal error message and then exit
