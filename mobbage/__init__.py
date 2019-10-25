@@ -384,42 +384,47 @@ class WorkerQueue():
     # actually removing anything from the queue).  Block if the queue is
     # empty
     def get(self):
+        if self.length > 0:
+            return self.jobs[0]
+        else:
+            self.num_finished += 1
+            return None
 
-        with self.lock:
-            if self.length > 0:
-                # Get a random position if we were instantiated that way
-                if self.is_random:
-                    self.position = random.randint(0, self.length - 1)
+        # with self.lock:
+        #     if self.length > 0:
+        #         # Get a random position if we were instantiated that way
+        #         if self.is_random:
+        #             self.position = random.randint(0, self.length - 1)
 
-                # We create a deep copy of the data here to prevent any
-                # thread-unsafe hijinks while accessing it
-                job = self.jobs[self.position]
+        #         # We create a deep copy of the data here to prevent any
+        #         # thread-unsafe hijinks while accessing it
+        #         job = self.jobs[self.position]
 
-                # If this data type has a counter embedded in it,
-                # decrement it, and if it has reached zero, delete it
-                # from the work list
-                if job.count > 0:
-                    job.count -= 1
+        #         # If this data type has a counter embedded in it,
+        #         # decrement it, and if it has reached zero, delete it
+        #         # from the work list
+        #         if job.count > 0:
+        #             job.count -= 1
 
-                    if job.count == 0:
-                        del(self.jobs[self.position])
-                        self.length -= 1
+        #             if job.count == 0:
+        #                 del(self.jobs[self.position])
+        #                 self.length -= 1
 
-                # Move our position counter to the next available job.  If
-                # we have reached the end of the queue, wrap around to
-                # the start of the queue
-                if not self.is_random:
-                    self.position += 1
-                    if self.position >= self.length:
-                        self.position = 0
+        #         # Move our position counter to the next available job.  If
+        #         # we have reached the end of the queue, wrap around to
+        #         # the start of the queue
+        #         if not self.is_random:
+        #             self.position += 1
+        #             if self.position >= self.length:
+        #                 self.position = 0
 
-                return job
+        #         return job
 
-            # If the work queue is empty, then we should start shutting
-            # things down
-            else:
-                self.num_finished += 1
-                return None
+        #     # If the work queue is empty, then we should start shutting
+        #     # things down
+        #     else:
+        #         self.num_finished += 1
+        #         return None
 
 
     # Delete all remaining items from the job queue
