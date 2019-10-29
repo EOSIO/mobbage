@@ -120,6 +120,8 @@ def get_args():
         help="Pause N ms after each request. Default is 0")
     group3.add_argument("-r", "--random", action="store_true",
         help="Fetch URLs in random order instead of sequentially")
+    group3.add_argument("-S", "--payload-size", metavar="N", type=int, default=12000,
+        help="The payload size specified in bytes. Default is 12000")
 
     group4 = parser.add_argument_group("Output control (mutually exclusive)")
     group4.add_argument("-q", "--quiet", action="store_true",
@@ -352,7 +354,7 @@ class WorkerQueue():
             # Create the file
             try:
                 fh = open(file_path, 'wb')
-                fh.write(os.urandom(12000))
+                fh.write(os.urandom(args.payload_size))
                 fh.close()
 
                 open(file_path, "rb")
