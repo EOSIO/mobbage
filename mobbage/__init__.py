@@ -15,6 +15,7 @@ import socket
 import sys
 import threading
 import time
+import uuid
 
 VERSION=get_version(root="..", relative_to=__file__)
 
@@ -386,43 +387,11 @@ class WorkerQueue():
     # actually removing anything from the queue).  Block if the queue is
     # empty
     def get(self):
-
-        with self.lock:
-            if self.length > 0:
-                # Get a random position if we were instantiated that way
-                if self.is_random:
-                    self.position = random.randint(0, self.length - 1)
-
-                # We create a deep copy of the data here to prevent any
-                # thread-unsafe hijinks while accessing it
-                job = self.jobs[self.position]
-
-                # If this data type has a counter embedded in it, 
-                # decrement it, and if it has reached zero, delete it 
-                # from the work list
-                if job.count > 0:
-                    job.count -= 1
-                    
-                    if job.count == 0:
-                        del(self.jobs[self.position])
-                        self.length -= 1
-
-                # Move our position counter to the next available job.  If 
-                # we have reached the end of the queue, wrap around to 
-                # the start of the queue
-                if not self.is_random:
-                    self.position += 1
-                    if self.position >= self.length:
-                        self.position = 0
-
-                return job
-
-            # If the work queue is empty, then we should start shutting
-            # things down
-            else:
-                self.num_finished += 1
-                return None
-
+        if self.length > 0:
+            return self.jobs[0]
+        else:
+            self.num_finished += 1
+            return None
 
     # Delete all remaining items from the job queue
     def purge(self):
@@ -440,6 +409,27 @@ class WorkerQueue():
         with self.lock:
             return self.num_finished
 
+class WorkerThreadDriver(threading.Thread):
+    def __init__(self, workers, work_queue, result_queue, http2):
+        threading.Thread.__init__(self)
+        self.workers = workers
+        self.work_queue = work_queue
+        self.result_queue = result_queue
+        self.http2 = http2
+        self.threads = []
+        self.keep_running = True
+
+    def run(self):
+        while(self.keep_running):
+            for i in range(self.workers):
+                thread = WorkerThread(self.work_queue, self.result_queue, self.http2)
+                thread.start()
+                self.threads.append(thread)
+
+            time.sleep(1)
+
+        for thread in self.threads:
+            thread.join()
 
 # Our worker thread, responsible for doing all of the heavy lifting
 class WorkerThread(threading.Thread):
@@ -451,99 +441,97 @@ class WorkerThread(threading.Thread):
 
     # Code that gets executed once the thread is launched
     def run(self):
-        while True:
-            job = self.work_queue.get()
+       job = self.work_queue.get()
 
-            # If the queue is empty, then our work is done
-            if job is None:
-                return
+       # If the queue is empty, then our work is done
+       if job is None:
+           return
 
-            # Set up our Requests session.
-            sess = requests.session()
+       # Set up our Requests session.
+       sess = requests.session()
 
-            # Mount our HTTP/2 transport adapter, if requested
-            if self.http2:
-                from hyper.contrib import HTTP20Adapter
-                sess.mount('https://', HTTP20Adapter())
+       # Mount our HTTP/2 transport adapter, if requested
+       if self.http2:
+           from hyper.contrib import HTTP20Adapter
+           sess.mount('https://', HTTP20Adapter())
 
-            # Create random file contents
+       # Build our multipart file list, if necessary
+       upload_files = []
+       file_paths = []
+       for file_data in job.upload:
+           file_var, file_path, mime_type = file_data
+           uid = str(uuid.uuid4())
+           file_path += uid
+           file_paths.append(file_path)
+           with open(file_path, 'wb') as new_file:
+               new_file.write(os.urandom(12000))
+           file_obj = open(file_path, "rb")
+           file_name = file_path.split("/")[-1]
 
-            # Fire off the request and trap any errors that pop up
+           upload_files.append(
+               (file_var, (file_name, file_obj, mime_type))
+           )
+
+       # Add authentication (if any)
+       auth = None
+       if job.auth:
+           if job.authtype == "digest":
+               auth = requests.auth.HTTPDigestAuth(job.auth)
+           else:
+               auth = requests.auth.HTTPBasicAuth(job.auth)
+
+        try:
             start = time.clock()
+
+            # Now fire off our request!
+            resp = sess.request(
+                job.method,
+                job.url,
+                params=job.params,
+                data=job.data,
+                headers=job.headers,
+                files=upload_files,
+                auth=auth,
+                cookies=job.cookiejar,
+                verify=not job.insecure
+
+            )
+            resp.raise_for_status()
+
+            # Record the time spent on the request
+            elapsed = time.clock() - start
+
+            # Now send the results off to our parent thread.  Note that we 
+            # read the actual length of the content instead of using the
+            # content-length response header, since consuming the content
+            # is required for keepalives and we might as well do it here
+            self.result_queue.put(DotDict({
+                'url':  job.orig_url,
+                'code': resp.status_code,
+                'time': elapsed,
+                'size': len(resp.content)
+            }))
+
+        # Catch any errors here, be they client-side errors (i.e.
+        # a mal-formed url passed to the requests module) or server
+        # side errors
+        except Exception as e:
             try:
+                err_code = resp.status_code
+            except:
+                err_code = 400
 
-                # Build our multipart file list, if necessary
-                upload_files = []
-                for file_data in job.upload:
-                    file_var, file_path, mime_type = file_data
-                    with open(file_path, 'wb') as new_file:
-                        new_file.write(os.urandom(12000))
-                    file_obj = open(file_path, "rb")
-                    file_name = file_path.split("/")[-1]
-
-                    upload_files.append(
-                        (file_var, (file_name, file_obj, mime_type))
-                    )
-
-                # Add authentication (if any)
-                auth = None
-                if job.auth:
-                    if job.authtype == "digest":
-                        auth = requests.auth.HTTPDigestAuth(job.auth)
-                    else:
-                        auth = requests.auth.HTTPBasicAuth(job.auth)
-
-                # Now fire off our request!
-                resp = sess.request(
-                    job.method,
-                    job.url,
-                    params=job.params,
-                    data=job.data,
-                    headers=job.headers,
-                    files=upload_files,
-                    auth=auth,
-                    cookies=job.cookiejar,
-                    verify=not job.insecure
-
-                )
-                resp.raise_for_status()
-
-                # Record the time spent on the request
-                elapsed = time.clock() - start
-
-                # Now send the results off to our parent thread.  Note that we 
-                # read the actual length of the content instead of using the
-                # content-length response header, since consuming the content
-                # is required for keepalives and we might as well do it here
-                self.result_queue.put(DotDict({
-                    'url':  job.orig_url,
-                    'code': resp.status_code,
-                    'time': elapsed,
-                    'size': len(resp.content)
-                }))
-
-            # Catch any errors here, be they client-side errors (i.e.
-            # a mal-formed url passed to the requests module) or server
-            # side errors
-            except Exception as e:
-                try:
-                    err_code = resp.status_code
-                except:
-                    err_code = 400
-
-                elapsed = time.clock() - start
-                self.result_queue.put(DotDict({
-                    'url': job.orig_url,
-                    'code': err_code,
-                    'time': elapsed,
-                    'size': 0,
-                    'error': e
-                }))
-                        
-
-            # Now sleep for the specified inter-request time (can be 0)
-            time.sleep(job.delay)
-    
+            elapsed = time.clock() - start
+            self.result_queue.put(DotDict({
+                'url': job.orig_url,
+                'code': err_code,
+                'time': elapsed,
+                'size': 0,
+                'error': e
+            }))
+        
+        for file_path in file_paths:
+            os.remove(file_path)
 
 # Throw a fatal error message and then exit
 def error(msg, parser=False):
@@ -647,12 +635,10 @@ def main():
     if not args.quiet and not args.csv and not args.json:
         output("Starting mobbage with {} worker{}.".format(args.workers,
             "s" if args.workers > 1 else ""))
-    threads = []
-    for i in range(args.workers):
-        thread = WorkerThread(work_queue, result_queue, args.http2)
-        thread.start()
-        threads.append(thread)
-        
+
+    thread_driver = WorkerThreadDriver(args.workers, work_queue, result_queue, args.http2)
+    thread_driver.start()
+
     # Stop parameters
     time_start   = time.time()
     num_requests = 0
@@ -746,8 +732,8 @@ def main():
     # Purge our work queue to force our worker threads to exit and then
     # wait for the threads to join
     work_queue.purge()
-    for thread in threads:
-        thread.join()
+    thread_driver.keep_running = False
+    thread_driver.join()
 
     # Clean up after our progress bar if it was being used
     if args.progress:
